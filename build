@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+
+set -E
+
+DIRS="colors data syntax indent compiler autoload ftplugin ftdetect doc syntax_checkers after/syntax after/indent after/ftplugin after/ftdetect neosnippets"
+DIRS_BASIC="syntax indent ftdetect syntax_checkers doc after/syntax after/indent after/ftdetect neosnippets"
+DIRS_ALL="colors data syntax indent compiler autoload ftplugin doc ftdetect syntax_checkers after neosnippets"
+DIRS_NOSYNTAX="indent compiler autoload ftplugin doc ftdetect syntax_checkers neosnippets"
+DIRS_DATA="data syntax indent compiler autoload ftplugin doc ftdetect syntax_checkers after neosnippets"
+DIRS_COLOR="colors"
+
+OUTPUT=""
+
+output() {
+  OUTPUT="$OUTPUT$1"
+  printf -- "$1"
+}
+
+download() {
+  for pack in $1; do
+    path="$(printf "$pack" | cut -d ':' -f 2)"
+    dir="tmp/$(printf "$path" | cut -d '/' -f 2)"
+    rm -rf "$dir"
+    (mkdir -p "$dir" && git clone --quiet --depth 1 https://github.com/$path "$dir" && printf '.') &
+  done
+
+  wait
+}
+
+extract() {
+  printf "\n"
+  for pack in $1; do
+    name="$(printf "$pack" | cut -d ':' -f 1)"
+    path="$(printf "$pack" | cut -d ':' -f 2)"
+    dir="tmp/$(printf "$path" | cut -d '/' -f 2)"
+    directories="DIRS$(printf "$pack" | cut -d ':' -f 3)"
+    subtree="$(printf "$pack" | cut -d ':' -f 4)"
+    output "- [$name](https://github.com/$path) ("
+
+    subdirs=""
+    for subdir in ${!directories}; do
+      if [ -d "${dir}${subtree:-/}${subdir}" ]; then
+        base="$(basename "$subdir")"
+        if [[ "$subdirs" != *"$base"* ]]; then
+          subdirs="$subdirs, $base"
+        fi
+
+        copy_dir "${dir}${subtree}" "$subdir" "$name"
+      fi
+    done
+
+
+    output "${subdirs##, })\n"
+  done
+
+  for pack in $1; do
+    name="$(printf "$pack" | cut -d ':' -f 1)"
+    path="$(printf "$pack" | cut -d ':' -f 2)"
+    dir="tmp/$(printf "$path" | cut -d '/' -f 2)"
+    subtree="$(printf "$pack" | cut -d ':' -f 4)"
+
+    if [ -d "$dir${subtree:-/}plugin" ]; then
+      printf "Possible error (plugin directory exists): $path\n"
+    fi
+  done
+}
+
+copy_dir() {
+  for file in $(find "$1/$2" -name '*.vim' -or -name '*.snip' -or -name '*.txt'); do
+    file_path="$(dirname "${file##$1/}")"
+    mkdir -p "$file_path"
+    touch "$file_path/$(basename "$file")"
+
+    # Use comma instead of / to handle cases like c/c++
+    sed -e "s,%%PACK%%,$3," -e "/%%CONTENT%%/{r $file" -e "d;}" plugin_guard.vim.template >> $file_path/$(basename "$file")
+  done
+}
+
+concat_ftdetect() {
+  cat ftdetect/* | grep -E '^[^"]' > tmp/polyglot.vim
+  rm -f ftdetect/*
+  mv tmp/polyglot.vim ftdetect/
+}
+
+update_readme() {
+  OLD_README="$(cat README.md)"
+
+  ed README.md <<- EOF
+/Language packs
++2kb
+/##
+'b,-2c
+$(printf -- "$OUTPUT")
+.
+w
+q
+EOF
+
+}
+
+PACKS=`cat packs`
+
+rm -rf tmp
+rm -rf $DIRS_ALL
+mkdir tmp
+
+printf "Downloading packs..."
+download "$PACKS"
+extract "$PACKS"
+concat_ftdetect
+update_readme
+
+rm -rf tmp
